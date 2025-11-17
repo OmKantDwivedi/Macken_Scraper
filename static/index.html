@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reddit Scraper Dashboard</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      display: flex;
+      justify-content: center;
+      padding: 40px;
+    }
+    .container {
+      background: white;
+      padding: 25px;
+      width: 450px;
+      border-radius: 12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    h2 { text-align: center; }
+    #progressBar {
+      width: 100%; height: 14px; 
+      background: #ddd; 
+      border-radius: 8px; 
+      overflow: hidden;
+    }
+    #progressBar div {
+      height: 100%; 
+      width: 0%; 
+      background: #4caf50; 
+      transition: 0.3s;
+    }
+    .btn {
+      width: 100%; padding: 12px; 
+      border: none; cursor: pointer; 
+      border-radius: 6px; 
+      margin-top: 15px;
+      background: #3b82f6; 
+      color: white; 
+      font-size: 15px;
+    }
+    .btn:disabled { background: gray; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h2>Reddit Scraper</h2>
+
+    <input type="file" id="csvFile" accept=".csv">
+
+    <button class="btn" onclick="startProcess()">Start Processing</button>
+
+    <p id="statusText">Waiting for CSV upload...</p>
+
+    <div id="progressBar"><div></div></div>
+
+    <a id="downloadLink" style="display:none" class="btn" download="output.csv">Download Output CSV</a>
+  </div>
+
+<script>
+  let taskId = null;
+
+  async function startProcess() {
+    const fileInput = document.getElementById("csvFile");
+    if (!fileInput.files.length) {
+      alert("Please upload a CSV file.");
+      return;
+    }
+
+    document.getElementById("statusText").innerText = "Uploading file...";
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+
+    const res = await fetch("/start", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await res.json();
+    taskId = data.taskId;
+
+    document.getElementById("statusText").innerText = "Processing started...";
+    pollStatus();
+  }
+
+  async function pollStatus() {
+    const interval = setInterval(async () => {
+      const res = await fetch(`/status?taskId=${taskId}`);
+      const data = await res.json();
+
+      document.getElementById("statusText").innerText = data.message;
+      document.querySelector('#progressBar div').style.width = data.progress + "%";
+
+      if (data.done) {
+        clearInterval(interval);
+        const link = document.getElementById("downloadLink");
+        link.href = data.outputUrl;
+        link.style.display = "block";
+      }
+    }, 1000);
+  }
+</script>
+
+</body>
+</html>
