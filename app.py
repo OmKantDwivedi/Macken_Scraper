@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, send_file, render_template
 import uuid
 import os
 import pandas as pd
-from scraper import process_csv, process_url
+from scraper import run_csv
 import threading
 
 app = Flask(__name__)
