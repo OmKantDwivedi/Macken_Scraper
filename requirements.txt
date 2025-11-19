@@ -6,3 +6,6 @@ requests
 numpy
 gunicorn
 praw
+aiohttp
+urllib3
+
