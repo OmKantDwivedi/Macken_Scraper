@@ -1,17 +1,19 @@
 from flask import Flask, request, jsonify, send_file, render_template
 import uuid
 import os
-import pandas as pd
-from scraper import run_csv
 import threading
+import pandas as pd
+from scraper import run_csv   # <-- IMPORTANT CHANGE
 
 app = Flask(__name__)
 
 TASKS = {}
 
+
 @app.route("/")
 def home():
     return render_template("index.html")
+
 
 @app.route('/start', methods=['POST'])
 def start_task():
@@ -33,33 +35,28 @@ def start_task():
         "output": output_path
     }
 
+    # Start background thread
     threading.Thread(target=run_scraper, args=(task_id, input_path, output_path)).start()
 
     return jsonify({"taskId": task_id})
 
 
+# ===================== UPDATED FUNCTION ======================
 def run_scraper(task_id, input_file, output_file):
-    df = pd.read_csv(input_file)
-    total = len(df)
+    try:
+        TASKS[task_id]["message"] = "Processing..."
+        TASKS[task_id]["progress"] = 10
 
-    TASKS[task_id]["message"] = f"Processing {total} URLs..."
+        # This function runs your async scraper and generates CSV
+        run_csv(input_file, output_file)
 
-    results = []
+        TASKS[task_id]["progress"] = 100
+        TASKS[task_id]["done"] = True
+        TASKS[task_id]["message"] = "Completed! Click below to download."
 
-    for i, url in enumerate(df["url"]):
-        try:
-            rows = process_url(url)
-            results.extend(rows)
-        except:
-            pass
-
-        TASKS[task_id]["progress"] = int((i + 1) / total * 100)
-        TASKS[task_id]["message"] = f"Processed {i + 1} / {total} URLs"
-
-    pd.DataFrame(results).to_csv(output_file, index=False)
-
-    TASKS[task_id]["done"] = True
-    TASKS[task_id]["message"] = "Completed! Click below to download."
+    except Exception as e:
+        TASKS[task_id]["done"] = True
+        TASKS[task_id]["message"] = f"Error: {str(e)}"
 
 
 @app.route('/status')
