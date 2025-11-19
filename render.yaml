@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: macken-scraper-api
+    runtime: python
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 200
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: scraper-files
+
+staticSites:
+  - name: macken-scraper-frontend
+    publishPath: .
+    buildCommand: ""
+    staticPublishPath: .
+    routes:
+      - type: rewrites
+        source: "/*"
+        destination: "/index.html"

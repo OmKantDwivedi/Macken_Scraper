@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
 import uuid
 import os
 import pandas as pd
@@ -8,6 +8,10 @@ import threading
 app = Flask(__name__)
 
 TASKS = {}
+
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 @app.route('/start', methods=['POST'])
 def start_task():
