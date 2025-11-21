@@ -1,165 +1,136 @@
-import aiohttp
-import asyncio
+import praw
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-# ================= CONFIG =================
+# ========== CONFIG ==========
 DAYS_THRESHOLD = 2
-MAX_CONCURRENT_REQUESTS = 50     # Higher = faster
+MAX_RETRIES = 3
+RETRY_DELAY = 1
+MAX_THREADS = 10        # Increase or decrease based on your CPU
 
 
-# Convert X days ago to timestamp
-def threshold_timestamp():
-    return datetime.utcnow().timestamp() - DAYS_THRESHOLD * 86400
+# ========== PRAW SETUP ==========
+reddit = praw.Reddit(
+    client_id="BG_Gmad1Nw1x7YB_IdnQCg",
+    client_secret="x2_0hd9jsvnLgw5CO-Mmc84xNwUbhQ",
+    user_agent="Mackayn-scraper/1.0 by u/Sure-Author-7442"
+)
 
 
-# ================= FETCH REDDIT JSON =================
-async def fetch_json(session, url):
-    if not url.endswith("/"):
-        url += "/"
-
-    api_url = url + ".json"
-
+# ========== CHECK REPLIES (OPTIMIZED) ==========
+def has_recent_reply(comment, threshold):
+    """
+    Recursively checks if a comment or its replies
+    have activity newer than threshold.
+    """
     try:
-        async with session.get(api_url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.json()
-    except:
-        return None
+        for reply in comment.replies:
 
-
-# ================= BUILD TREE =================
-def build_tree(comment_listing):
-    comment_map = {}
-    children_map = {}
-
-    def walk(comments):
-        for c in comments:
-            if c.get("kind") != "t1":
+            # Skip deleted authors & AutoModerator
+            if not reply.author or reply.author.name.lower() == "automoderator":
                 continue
 
-            data = c["data"]
-            cid = data["id"]
-            pid = data.get("parent_id")
-
-            comment_map[cid] = data
-            children_map.setdefault(pid, []).append(data)
-
-            if data.get("replies") and isinstance(data["replies"], dict):
-                walk(data["replies"]["data"]["children"])
-
-    walk(comment_listing)
-    return comment_map, children_map
-
-
-# ================= RECURSIVE CHECK =================
-def has_recent_reply(cid, comment_map, children_map, threshold):
-    for reply in children_map.get(f"t1_{cid}", []):
-        if reply["author"].lower() != "automoderator":
-            if reply["created_utc"] >= threshold:
+            if reply.created_utc >= threshold:
                 return True
 
-            if has_recent_reply(reply["id"], comment_map, children_map, threshold):
+            if has_recent_reply(reply, threshold):
                 return True
+
+    except Exception:
+        pass
 
     return False
 
 
-# ================= PROCESS SINGLE POST =================
-async def process_post(session, url):
-    data = await fetch_json(session, url)
-
-    if not data or len(data) < 2:
-        return [{
-            "Parent": "No comments found",
-            "Child1": None, "Child2": None, "Child3": None,
-            "URL": url
-        }]
-
-    comments = data[1]["data"]["children"]
-    comment_map, children_map = build_tree(comments)
-    threshold = threshold_timestamp()
-
-    # Top-level = parent comments (parent_id starts with t3_)
-    parents = [
-        c for c in comment_map.values()
-        if c.get("parent_id", "").startswith("t3_")
-        and c.get("author", "").lower() != "automoderator"
-    ][:3]
-
-    if not parents:
-        return [{
-            "Parent": "No comments found",
-            "Child1": None, "Child2": None, "Child3": None,
-            "URL": url
-        }]
-
-    rows = []
-
-    for parent in parents:
-        parent_status = "YES" if has_recent_reply(
-            parent["id"], comment_map, children_map, threshold
-        ) else "NO"
-
-        parent_out = f"{parent['author']}({parent_status})"
-
-        # Children (Top 3)
-        child_comments = [
-            r for r in children_map.get(f"t1_{parent['id']}", [])
-            if r["author"].lower() != "automoderator"
-        ][:3]
-
-        child_out = []
-        for child in child_comments:
-            status = "YES" if has_recent_reply(
-                child["id"], comment_map, children_map, threshold
-            ) else "NO"
-            child_out.append(f"{child['author']}({status})")
-
-        while len(child_out) < 3:
-            child_out.append(None)
-
-        rows.append({
-            "Parent": parent_out,
-            "Child1": child_out[0],
-            "Child2": child_out[1],
-            "Child3": child_out[2],
-            "URL": url
-        })
-
-    return rows
+# Format author output
+def fmt(author, status):
+    return f"{author}({status})" if author else None
 
 
-# ================= PROCESS ALL LINKS =================
-async def process_all(url_list, output_file):
-    connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_REQUESTS)
+# ========== PROCESS SINGLE URL ==========
+def process_url(url):
+    for attempt in range(MAX_RETRIES):
+        try:
+            submission = reddit.submission(url=url)
+            submission.comments.replace_more(limit=None)
 
-    async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [asyncio.create_task(process_post(session, url)) for url in url_list]
-        results = await asyncio.gather(*tasks)
+            threshold = datetime.utcnow().timestamp() - DAYS_THRESHOLD * 86400
 
-    final_rows = []
-    for r in results:
-        final_rows.extend(r)
+            # ===== Get TOP 3 parent comments (skip AutoModerator + deleted) =====
+            parents = [
+                c for c in submission.comments
+                if c.author and c.author.name.lower() != "automoderator"
+            ][:3]
 
-    pd.DataFrame(final_rows).to_csv(output_file, index=False)
+            rows = []
+
+            for parent in parents:
+
+                parent_status = "YES" if has_recent_reply(parent, threshold) else "NO"
+                parent_out = fmt(parent.author.name, parent_status)
+
+                # ===== Top 3 replies (skip AutoModerator + deleted) =====
+                valid_replies = [
+                    r for r in parent.replies
+                    if r.author and r.author.name.lower() != "automoderator"
+                ]
+
+                child_list = []
+                for reply in valid_replies[:3]:
+                    status = "YES" if has_recent_reply(reply, threshold) else "NO"
+                    child_list.append(fmt(reply.author.name, status))
+
+                while len(child_list) < 3:
+                    child_list.append(None)
+
+                rows.append({
+                    "Parent": parent_out,
+                    "Child1": child_list[0],
+                    "Child2": child_list[1],
+                    "Child3": child_list[2],
+                    "URL": url
+                })
+
+            return rows
+
+        except Exception as e:
+            if attempt == MAX_RETRIES - 1:
+                return [{
+                    "Parent": f"Error: {e}",
+                    "Child1": None,
+                    "Child2": None,
+                    "Child3": None,
+                    "URL": url
+                }]
+
+            time.sleep(RETRY_DELAY)
+
+
+# ========== MULTI-THREAD CSV PROCESSING ==========
+def process_csv(input_file, output_file):
+    df = pd.read_csv(input_file)
+    url_list = df["url"].tolist()
+
+    final = []
+
+    print(f"⚙ Processing {len(url_list)} URLs using {MAX_THREADS} threads...")
+
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        futures = {executor.submit(process_url, url): url for url in url_list}
+
+        for future in as_completed(futures):
+            rows = future.result()
+            final.extend(rows)
+
+    pd.DataFrame(final).to_csv(output_file, index=False)
     print("✅ Output saved to:", output_file)
 
 
-# ================= ENTRY POINT =================
-def run_csv(input_file, output_file):
-    df = pd.read_csv(input_file)
-    urls = df["url"].tolist()
-
-    print(f"⚙ Processing {len(urls)} URLs using native Reddit JSON...")
-
-    asyncio.run(process_all(urls, output_file))
-
-
+# ========== RUN ==========
 if __name__ == "__main__":
-    run_csv(
-        "Copy of MaxBounty - 10OCT25 - Sheet1.csv",
-        "output_json_async.csv"
+    process_csv(
+        "url - Sheet1 - url - Sheet1.csv",
+        "output.csv"
     )
