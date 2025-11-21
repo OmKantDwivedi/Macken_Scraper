@@ -3,7 +3,8 @@ import uuid
 import os
 import threading
 import pandas as pd
-from scraper import run_csv   # <-- IMPORTANT CHANGE
+from scraper import process_csv
+
 
 app = Flask(__name__)
 
@@ -48,7 +49,7 @@ def run_scraper(task_id, input_file, output_file):
         TASKS[task_id]["progress"] = 10
 
         # This function runs your async scraper and generates CSV
-        run_csv(input_file, output_file)
+        process_csv(input_file, output_file)
 
         TASKS[task_id]["progress"] = 100
         TASKS[task_id]["done"] = True
