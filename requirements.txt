@@ -1,11 +1,9 @@
 Flask==3.0.2
 pandas
-supabase
 python-dotenv
 requests
 numpy
 gunicorn
 praw
-aiohttp
 urllib3
 
