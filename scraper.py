@@ -1,11 +1,11 @@
 import praw
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ========== CONFIG ==========
-DAYS_THRESHOLD = 2
+DAYS_THRESHOLD = 2.2
 MAX_RETRIES = 3
 RETRY_DELAY = 1
 MAX_THREADS = 10        # Increase or decrease based on your CPU
@@ -27,9 +27,7 @@ def has_recent_reply(comment, threshold):
     """
     try:
         for reply in comment.replies:
-
-            # Skip deleted authors & AutoModerator
-            if not reply.author or reply.author.name.lower() == "automoderator":
+            if reply.author and reply.author.name.lower() == "automoderator":
                 continue
 
             if reply.created_utc >= threshold:
@@ -58,7 +56,7 @@ def process_url(url):
 
             threshold = datetime.utcnow().timestamp() - DAYS_THRESHOLD * 86400
 
-            # ===== Get TOP 3 parent comments (skip AutoModerator + deleted) =====
+            # ===== Get TOP 3 parent comments (skip AutoModerator) =====
             parents = [
                 c for c in submission.comments
                 if c.author and c.author.name.lower() != "automoderator"
@@ -71,7 +69,7 @@ def process_url(url):
                 parent_status = "YES" if has_recent_reply(parent, threshold) else "NO"
                 parent_out = fmt(parent.author.name, parent_status)
 
-                # ===== Top 3 replies (skip AutoModerator + deleted) =====
+                # ===== Top 3 replies (skip AutoModerator) =====
                 valid_replies = [
                     r for r in parent.replies
                     if r.author and r.author.name.lower() != "automoderator"
@@ -131,6 +129,6 @@ def process_csv(input_file, output_file):
 # ========== RUN ==========
 if __name__ == "__main__":
     process_csv(
-        "url - Sheet1 - url - Sheet1.csv",
+        "21st urls - Sheet1.csv",
         "output.csv"
     )
